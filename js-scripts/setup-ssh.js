@@ -706,6 +706,72 @@ function buildRtdbUrl(base, id) {
   return `${joinUrl(b, i)}.json`;
 }
 
+function withTimeout(ms) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ms);
+  return { controller, clear: () => clearTimeout(t) };
+}
+
+/**
+ * PATCH JSON via fetch (Node 18+)
+ * @param {string} url
+ * @param {object} obj
+ * @param {object} [opts]
+ * @param {number} [opts.timeoutMs=15000]
+ * @param {string} [opts.bearerToken]  // optional: Authorization: Bearer <token>
+ * @returns {Promise<boolean>}
+ */
+async function fetchPatchJson(url, obj, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs ?? process.env.ENV_JSON_TIMEOUT_MS ?? 15000);
+  const bearerToken = opts.bearerToken || process.env.RTDB_BEARER_TOKEN || "";
+
+  const body = JSON.stringify(obj);
+
+  log(`📡 Persisting SSH URLs via fetch PATCH => ${maskAuthInUrl(url)}`);
+
+  const { controller, clear } = withTimeout(timeoutMs);
+
+  try {
+    if (typeof fetch !== "function") {
+      log("❌ fetch() is not available. Need Node 18+.");
+      return false;
+    }
+
+    const headers = {
+      "Content-Type": "application/json",
+    };
+    if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
+
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers,
+      body,
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      // try read response text for debugging (kept short)
+      let txt = "";
+      try {
+        txt = await res.text();
+      } catch {}
+      txt = (txt || "").slice(0, 500);
+
+      log(`⚠️  fetch PATCH failed: HTTP ${res.status} ${res.statusText}${txt ? ` | body: ${txt}` : ""}`);
+      return false;
+    }
+
+    log("✅ Persisted SSH URLs to RTDB");
+    return true;
+  } catch (e) {
+    const msg = e?.name === "AbortError" ? `Timeout after ${timeoutMs}ms` : e?.message || String(e);
+    log(`⚠️  fetch PATCH error: ${msg}`);
+    return false;
+  } finally {
+    clear();
+  }
+}
+
 function curlPatchJson(url, obj) {
   if (!commandExists("curl")) {
     log("⚠️  curl not found => skip persisting SSH URLs.");
@@ -832,7 +898,8 @@ function persistSshUrlsIfNeeded({ sshjConnect, pinggyEndpoint }) {
   log(`📡 Persisting SSH URLs via curl PATCH => ${maskAuthInUrl(url)}`);
 
   // keep actual url (with auth) for request
-  curlPatchJson(url, payload);
+  // curlPatchJson(url, payload);
+  fetchPatchJson(url, payload);
 }
 
 // ───────────────────────────────────────────────────────
