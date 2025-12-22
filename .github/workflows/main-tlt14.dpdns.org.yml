@@ -2,7 +2,7 @@ name: tlt14.dpdns.org
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
   workflow_dispatch:
     inputs:
@@ -64,7 +64,7 @@ jobs:
           npm i -g pm2
           pm2 -v
 
-      - name: Start PM2: nginx;cloudflared;envListener
+      - name: Start PM2 nginx;cloudflared;envListener
         shell: bash
         run: |
           set -euo pipefail
