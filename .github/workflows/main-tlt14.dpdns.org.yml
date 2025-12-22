@@ -56,10 +56,18 @@ jobs:
           SSHJ_ENABLE: "1"
 
       - name: npm-install
+        env:
+          # đảm bảo npm không spam debug
+          NPM_CONFIG_LOGLEVEL: warn
         shell: bash
         run: |
           set -euo pipefail
-          npm install
+          set +x  # ✅ tránh bị log từng lệnh/biến nếu shell đang bật -x từ trước
+
+          echo "ENV_STAGE=$ENV_STAGE"
+          echo "Node: $(node -v) | NPM: $(npm -v)"
+
+          npm install --no-audit --no-fund
           npm i -g pm2
           pm2 -v
 
