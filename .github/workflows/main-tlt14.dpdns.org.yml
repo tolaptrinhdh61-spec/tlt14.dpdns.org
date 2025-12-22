@@ -61,15 +61,16 @@ jobs:
           SSHJ_ENABLE: "1"
 
       - name: npm-install
-        env:
-          # đảm bảo npm không spam debug
-          NPM_CONFIG_LOGLEVEL: warn
         shell: bash
         run: |
           set -euo pipefail
-
-          npm install 
+          npm install
           npm i -g pm2
+          # ✅ make global npm bin available for NEXT steps
+          echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
+
+          # kiểm tra ngay trong step này
+          which pm2
           pm2 -v
 
       - name: Start PM2 nginx;cloudflared;envListener

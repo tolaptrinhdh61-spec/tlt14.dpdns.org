@@ -20,7 +20,7 @@
 import fs from "node:fs";
 import process from "node:process";
 
-const BASE64_SUFFIX = "__BASE64__";
+const BASE64_SUFFIX = "__BASE64-remove__";
 
 /**
  * ✅ Keys to mask (ONLY these keys will be masked)
