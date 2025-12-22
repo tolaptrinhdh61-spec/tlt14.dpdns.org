@@ -39,14 +39,20 @@ jobs:
 
       - name: ensure-cloudflared.mjs
         run: node ./js-scripts/ensure-cloudflared.mjs
+      # ✅ Export env cho toàn job mà KHÔNG dùng jobs.<job>.env
+      - name: Export runtime env
+        shell: bash
+        run: |
+          echo "ENV_STAGE=${{ github.event.inputs.ENV_STAGE || 'PROD' }}" >> "$GITHUB_ENV"
+          echo "ENV_JSON_URL=${{ secrets.ENV_JSON_URL }}" >> "$GITHUB_ENV"
 
       - name: load-env-from-url
         run: node ./js-scripts/load-env-from-url.mjs
-        env:
-          # giống parameters của Azure
-          ENV_STAGE: ${{ github.event.inputs.ENV_STAGE || 'PROD' }}
-          # giống $(ENV_JSON_URL) của Azure -> dùng GitHub Secrets
-          ENV_JSON_URL: ${{ secrets.ENV_JSON_URL }}
+        # env:
+        #   # giống parameters của Azure
+        #   ENV_STAGE: ${{ github.event.inputs.ENV_STAGE || 'PROD' }}
+        #   # giống $(ENV_JSON_URL) của Azure -> dùng GitHub Secrets
+        #   ENV_JSON_URL: ${{ secrets.ENV_JSON_URL }}
 
       - name: setup-ssh.js
         run: node ./js-scripts/setup-ssh.js
