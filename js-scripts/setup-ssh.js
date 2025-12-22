@@ -767,8 +767,6 @@ async function fetchPatchJson(url, obj, opts = {}) {
       body,
       signal: controller.signal,
     });
-    console.log({ url, body, headers });
-
     if (!res.ok) {
       // try read response text for debugging (kept short)
       let txt = "";
