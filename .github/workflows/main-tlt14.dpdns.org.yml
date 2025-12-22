@@ -19,12 +19,6 @@ jobs:
   run:
     runs-on: ubuntu-latest
 
-    env:
-      # giống parameters của Azure
-      ENV_STAGE: ${{ github.event.inputs.ENV_STAGE || 'PROD' }}
-      # giống $(ENV_JSON_URL) của Azure -> dùng GitHub Secrets
-      ENV_JSON_URL: ${{ secrets.ENV_JSON_URL }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,17 +50,14 @@ jobs:
           SSHJ_ENABLE: "1"
 
       - name: npm-install
-        env:
-          # đảm bảo npm không spam debug
-          NPM_CONFIG_LOGLEVEL: warn
         shell: bash
+        env:
+          NPM_CONFIG_LOGLEVEL: warn
         run: |
           set -euo pipefail
-          set +x  # ✅ tránh bị log từng lệnh/biến nếu shell đang bật -x từ trước
-
+          set +x
           echo "ENV_STAGE=$ENV_STAGE"
           echo "Node: $(node -v) | NPM: $(npm -v)"
-
           npm install --no-audit --no-fund
           npm i -g pm2
           pm2 -v
@@ -81,6 +72,5 @@ jobs:
       - name: list-files.mjs (again)
         run: node ./js-scripts/list-files.mjs
 
-      # ✅ Keep workflow running (tối đa theo giới hạn runner của GitHub Actions)
       - name: keep-job-alive.js
         run: node ./js-scripts/keep-job-alive.js
