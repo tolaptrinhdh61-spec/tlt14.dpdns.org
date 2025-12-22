@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-
-/** js-scripts\load-env-from-url.mjs
+/**
+ * js-scripts/load-env-from-url.mjs
  * Load JSON from URL and export to:
  * - GitHub Actions: via GITHUB_ENV (persist across steps in same job)
  * - Azure Pipelines: via ##vso[task.setvariable] (persist across subsequent tasks)
@@ -10,6 +10,10 @@
  *     NGINX_CONF__BASE64__ => also export NGINX_CONF = base64Decode(value)
  * - If value is object/array, store as JSON string
  *
+ * Security/logging:
+ * - GitHub Actions: auto-mask ALL exported values via ::add-mask::
+ * - Azure Pipelines: set variables with issecret=true (masked in logs)
+ * - DEV mode: prints keys only (values masked)
  */
 
 import fs from "node:fs";
@@ -17,15 +21,33 @@ import process from "node:process";
 
 const BASE64_SUFFIX = "__BASE64__";
 
+/** Detect CI */
 function isLikelyAzure() {
   const v = (process.env.TF_BUILD || "").toLowerCase();
   return v === "true" || v === "1";
 }
-
 function isLikelyGitHub() {
   return Boolean(process.env.GITHUB_ENV);
 }
 
+/** GitHub Actions masking (best-effort) */
+function addMaskGitHub(value) {
+  const s = String(value ?? "");
+  if (!s) return;
+
+  // GitHub: mask whole string
+  const normalized = s.replace(/\r/g, "");
+  process.stdout.write(`::add-mask::${normalized}\n`);
+
+  // If multiline, also mask each line (helps prevent partial leaks)
+  if (normalized.includes("\n")) {
+    for (const line of normalized.split("\n")) {
+      if (line) process.stdout.write(`::add-mask::${line}\n`);
+    }
+  }
+}
+
+/** Key normalization to safe env var name */
 function normalizeKey(key) {
   const s = String(key);
 
@@ -41,12 +63,12 @@ function normalizeKey(key) {
   return { key: finalKey, changed: true, original: s };
 }
 
+/** Convert JSON values to env string */
 function toEnvValue(v) {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
 
-  // object/array -> JSON string
   try {
     return JSON.stringify(v);
   } catch {
@@ -55,8 +77,6 @@ function toEnvValue(v) {
 }
 
 function isProbablyBase64String(s) {
-  // very lightweight check (avoid rejecting valid base64 with newlines)
-  // allow = and newline; require length >= 4
   if (typeof s !== "string") return false;
   const t = s.trim();
   if (t.length < 4) return false;
@@ -64,15 +84,12 @@ function isProbablyBase64String(s) {
 }
 
 function decodeBase64ToUtf8(s) {
-  // supports base64 with newlines
   const cleaned = String(s).replace(/\s+/g, "");
   const buf = Buffer.from(cleaned, "base64");
-
-  // optional sanity: if decoding gives empty but input not empty => might be wrong
-  // still return buf.toString, caller decides warning
   return buf.toString("utf8");
 }
 
+/** Write to GITHUB_ENV safely (supports multiline) */
 function appendGitHubEnv(envFilePath, key, value) {
   const hasNewline = /\r|\n/.test(value);
   if (!hasNewline) {
@@ -84,19 +101,25 @@ function appendGitHubEnv(envFilePath, key, value) {
   fs.appendFileSync(envFilePath, `${key}<<${delimiter}\n${value}\n${delimiter}\n`, "utf8");
 }
 
+/** Export variable into: current process + GitHub env file + Azure variables */
 function exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure }) {
-  // current process
+  // current process env
   process.env[key] = value;
+
+  // ✅ Mask value in CI logs (best-effort)
+  if (inGitHub) {
+    addMaskGitHub(value);
+  }
 
   // GitHub persists for next steps
   if (inGitHub && githubEnvFile) {
     appendGitHubEnv(githubEnvFile, key, value);
   }
 
-  // Azure persists for next tasks
+  // Azure persists for next tasks (marked secret to mask logs)
   if (inAzure) {
-    const safe = value.replace(/\r?\n/g, "\\n");
-    process.stdout.write(`##vso[task.setvariable variable=${key}]${safe}\n`);
+    const safe = String(value).replace(/\r?\n/g, "\\n");
+    process.stdout.write(`##vso[task.setvariable variable=${key};issecret=true]${safe}\n`);
   }
 }
 
@@ -163,7 +186,7 @@ async function main() {
     }
     exported.push(key);
 
-    // ✅ If ends with __BASE64__, also export decoded version with suffix removed
+    // ✅ If ends with __BASE64__, also export decoded version
     if (key.endsWith(BASE64_SUFFIX)) {
       const baseKey = key.slice(0, -BASE64_SUFFIX.length);
 
@@ -184,7 +207,6 @@ async function main() {
         continue;
       }
 
-      // sanity warning: decoded empty but input not empty
       if (decoded.length === 0 && String(value).trim().length > 0) {
         warnings.push(`Decoded "${baseKey}" is empty (input non-empty). Check base64 content.`);
       }
@@ -206,10 +228,8 @@ async function main() {
   console.log(`✅ ENV_STAGE=${process.env.ENV_STAGE || "PROD"} | Loaded ${exported.length} env var(s) into: ${where}`);
 
   if (dev) {
-    console.log("🧪 DEV mode: printing exported env values");
-    for (const k of exported) {
-      console.log(`${k}=${process.env[k] ?? ""}`);
-    }
+    console.log("🧪 DEV mode: exported keys (values are masked)");
+    for (const k of exported) console.log(`${k}=***`);
   }
 }
 
