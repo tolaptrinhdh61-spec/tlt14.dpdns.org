@@ -1,0 +1,11 @@
+{
+  "name": "ci-deploy",
+  "version": "1.0.0",
+  "dependencies": {
+    "firebase-admin": "^13.6.0",
+    "pm2": "^6.0.13"
+  },
+  "devDependencies": {
+    "simple-git": "^3.30.0"
+  }
+}
