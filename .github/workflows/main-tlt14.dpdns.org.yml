@@ -45,6 +45,8 @@ jobs:
         run: |
           echo "ENV_STAGE=${{ github.event.inputs.ENV_STAGE || 'PROD' }}" >> "$GITHUB_ENV"
           echo "ENV_JSON_URL=${{ secrets.ENV_JSON_URL }}" >> "$GITHUB_ENV"
+          echo "PINGGY_ENABLE=1" >> "$GITHUB_ENV"
+          echo "SSHJ_ENABLE=1" >> "$GITHUB_ENV"
 
       - name: load-env-from-url
         run: node ./js-scripts/load-env-from-url.mjs
@@ -56,14 +58,14 @@ jobs:
 
       - name: setup-ssh.js
         run: node ./js-scripts/setup-ssh.js
-        env:
-          PINGGY_ENABLE: "1"
-          SSHJ_ENABLE: "1"
+        # env:
+        #   PINGGY_ENABLE: "1"
+        #   SSHJ_ENABLE: "1"
 
       - name: npm-install
         shell: bash
-        env:
-          NPM_CONFIG_LOGLEVEL: warn
+        # env:
+        #   NPM_CONFIG_LOGLEVEL: warn
         run: |
           set -euo pipefail
           set +x
