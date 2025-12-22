@@ -711,6 +711,27 @@ function withTimeout(ms) {
   const t = setTimeout(() => controller.abort(), ms);
   return { controller, clear: () => clearTimeout(t) };
 }
+function sanitizeUrl(raw) {
+  if (raw === null || raw === undefined) return "";
+  let s = String(raw);
+
+  // remove BOM + trim whitespace/newlines
+  s = s.replace(/^\uFEFF/, "").trim();
+
+  // remove surrounding quotes if present: "..." or '...'
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    s = s.slice(1, -1).trim();
+  }
+
+  // remove trailing escaped newlines if someone accidentally included "\n" literally
+  // (rare, but happens when JSON stores "\\n")
+  s = s.replace(/(\\r\\n|\\n|\\r)+$/g, "").trim();
+
+  // remove real trailing CR/LF (already covered by trim, but keep for safety)
+  s = s.replace(/[\r\n]+$/g, "");
+
+  return s;
+}
 
 /**
  * PATCH JSON via fetch (Node 18+)
@@ -718,12 +739,11 @@ function withTimeout(ms) {
  * @param {object} obj
  * @param {object} [opts]
  * @param {number} [opts.timeoutMs=15000]
- * @param {string} [opts.bearerToken]  // optional: Authorization: Bearer <token>
  * @returns {Promise<boolean>}
  */
 async function fetchPatchJson(url, obj, opts = {}) {
+  url = sanitizeUrl(url);
   const timeoutMs = Number(opts.timeoutMs ?? process.env.ENV_JSON_TIMEOUT_MS ?? 15000);
-  const bearerToken = opts.bearerToken || process.env.RTDB_BEARER_TOKEN || "";
 
   const body = JSON.stringify(obj);
 
@@ -740,7 +760,6 @@ async function fetchPatchJson(url, obj, opts = {}) {
     const headers = {
       "Content-Type": "application/json",
     };
-    if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
 
     const res = await fetch(url, {
       method: "PATCH",
@@ -748,6 +767,7 @@ async function fetchPatchJson(url, obj, opts = {}) {
       body,
       signal: controller.signal,
     });
+    console.log({ url, body, headers });
 
     if (!res.ok) {
       // try read response text for debugging (kept short)
@@ -769,32 +789,6 @@ async function fetchPatchJson(url, obj, opts = {}) {
     return false;
   } finally {
     clear();
-  }
-}
-
-function curlPatchJson(url, obj) {
-  if (!commandExists("curl")) {
-    log("⚠️  curl not found => skip persisting SSH URLs.");
-    return false;
-  }
-  const body = JSON.stringify(obj);
-
-  const args = ["-sS", "-f", "-X", "PATCH", "-H", "Content-Type: application/json", "-d", body, url];
-
-  log(`📡 Persisting SSH URLs via curl PATCH => ${maskAuthInUrl(url)}`);
-  try {
-    // use spawnSync to keep output clean & deterministic
-    const { spawnSync } = require("child_process");
-    const r = spawnSync("curl", args, { stdio: "inherit" });
-    if (r.status !== 0) {
-      log(`⚠️  curl PATCH failed (exit=${r.status})`);
-      return false;
-    }
-    log("✅ Persisted SSH URLs to RTDB");
-    return true;
-  } catch (e) {
-    log(`⚠️  curl PATCH error: ${e?.message || e}`);
-    return false;
   }
 }
 function maskAuthInUrl(u) {
@@ -868,7 +862,7 @@ function notifySshUrlsToNtfy({ sshjConnect, pinggyEndpoint, envId }) {
     sendNtfyLine({ topic, title: "🧩 ENV_SSH_URLS_ID", line: envId });
   }
 }
-function persistSshUrlsIfNeeded({ sshjConnect, pinggyEndpoint }) {
+async function persistSshUrlsIfNeeded({ sshjConnect, pinggyEndpoint }) {
   const base = String(process.env.ENV_SSH_URLS || "").trim();
   const id = String(process.env.ENV_SSH_URLS_ID || "").trim();
 
@@ -894,12 +888,8 @@ function persistSshUrlsIfNeeded({ sshjConnect, pinggyEndpoint }) {
     return;
   }
 
-  // ✅ log masked (hide auth)
-  log(`📡 Persisting SSH URLs via curl PATCH => ${maskAuthInUrl(url)}`);
-
   // keep actual url (with auth) for request
-  // curlPatchJson(url, payload);
-  fetchPatchJson(url, payload);
+  await fetchPatchJson(url, payload);
 }
 
 // ───────────────────────────────────────────────────────
@@ -944,7 +934,7 @@ function persistSshUrlsIfNeeded({ sshjConnect, pinggyEndpoint }) {
   // ✅ Persist to RTDB if ENV_SSH_URLS + ENV_SSH_URLS_ID exist
   log(`🌐 sshjConnect: ${sshjConnect}`);
   log(`🌐 pinggyEndpoint: ${pinggyEndpoint}`);
-  persistSshUrlsIfNeeded({ sshjConnect, pinggyEndpoint });
+  await persistSshUrlsIfNeeded({ sshjConnect, pinggyEndpoint });
 
   // ✅ Notify via ntfy (best-effort, no fail)
   try {
