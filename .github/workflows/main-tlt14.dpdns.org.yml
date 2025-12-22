@@ -19,6 +19,12 @@ jobs:
   run:
     runs-on: ubuntu-latest
 
+    env:
+      # giống parameters của Azure
+      ENV_STAGE: ${{ github.event.inputs.ENV_STAGE || 'PROD' }}
+      # giống $(ENV_JSON_URL) của Azure -> dùng GitHub Secrets
+      ENV_JSON_URL: ${{ secrets.ENV_JSON_URL }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,39 +45,30 @@ jobs:
 
       - name: ensure-cloudflared.mjs
         run: node ./js-scripts/ensure-cloudflared.mjs
-      # ✅ Export env cho toàn job mà KHÔNG dùng jobs.<job>.env
-      - name: Export runtime env
-        shell: bash
-        run: |
-          echo "ENV_STAGE=${{ github.event.inputs.ENV_STAGE || 'PROD' }}" >> "$GITHUB_ENV"
-          echo "ENV_JSON_URL=${{ secrets.ENV_JSON_URL }}" >> "$GITHUB_ENV"
-          echo "PINGGY_ENABLE=1" >> "$GITHUB_ENV"
-          echo "SSHJ_ENABLE=1" >> "$GITHUB_ENV"
+        env:
+          # giống parameters của Azure
+          ENV_STAGE: ${{ github.event.inputs.ENV_STAGE || 'PROD' }}
+          # giống $(ENV_JSON_URL) của Azure -> dùng GitHub Secrets
+          ENV_JSON_URL: ${{ secrets.ENV_JSON_URL }}
 
       - name: load-env-from-url
         run: node ./js-scripts/load-env-from-url.mjs
-        # env:
-        #   # giống parameters của Azure
-        #   ENV_STAGE: ${{ github.event.inputs.ENV_STAGE || 'PROD' }}
-        #   # giống $(ENV_JSON_URL) của Azure -> dùng GitHub Secrets
-        #   ENV_JSON_URL: ${{ secrets.ENV_JSON_URL }}
 
       - name: setup-ssh.js
         run: node ./js-scripts/setup-ssh.js
-        # env:
-        #   PINGGY_ENABLE: "1"
-        #   SSHJ_ENABLE: "1"
+        env:
+          PINGGY_ENABLE: "1"
+          SSHJ_ENABLE: "1"
 
       - name: npm-install
+        env:
+          # đảm bảo npm không spam debug
+          NPM_CONFIG_LOGLEVEL: warn
         shell: bash
-        # env:
-        #   NPM_CONFIG_LOGLEVEL: warn
         run: |
           set -euo pipefail
-          set +x
-          echo "ENV_STAGE=$ENV_STAGE"
-          echo "Node: $(node -v) | NPM: $(npm -v)"
-          npm install --no-audit --no-fund
+
+          npm install 
           npm i -g pm2
           pm2 -v
 
@@ -85,5 +82,6 @@ jobs:
       - name: list-files.mjs (again)
         run: node ./js-scripts/list-files.mjs
 
+      # ✅ Keep workflow running (tối đa theo giới hạn runner của GitHub Actions)
       - name: keep-job-alive.js
         run: node ./js-scripts/keep-job-alive.js

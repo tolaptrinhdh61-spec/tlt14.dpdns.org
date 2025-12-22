@@ -11,8 +11,9 @@
  * - If value is object/array, store as JSON string
  *
  * Security/logging:
- * - GitHub Actions: auto-mask ALL exported values via ::add-mask::
- * - Azure Pipelines: set variables with issecret=true (masked in logs)
+ * - Mask ONLY selected keys (configurable below)
+ * - GitHub Actions: ::add-mask::
+ * - Azure Pipelines: issecret=true (only for masked keys)
  * - DEV mode: prints keys only (values masked)
  */
 
@@ -20,6 +21,36 @@ import fs from "node:fs";
 import process from "node:process";
 
 const BASE64_SUFFIX = "__BASE64__";
+
+/**
+ * ✅ Keys to mask (ONLY these keys will be masked)
+ * - Put exact env var names here AFTER normalization (recommended).
+ * - If you want to include BASE64 decoded key, add both:
+ *   e.g. "NGINX_CONF__BASE64__" and "NGINX_CONF"
+ */
+const MASK_KEYS = new Set([
+  "ENV_JSON_URL",
+  "CLOUDFLARE_TUNNEL_TOKEN",
+  "ENV_LISTENER_FB_SERVICES_ACCOUNT_BASE64",
+  "ENV_SSH_URLS",
+  "PIPELINE_SSH_PUBKEY",
+  "NGINX_CONF__BASE64__",
+  // add more...
+]);
+
+/**
+ * Optional: also mask keys by pattern (prefix/suffix)
+ * If you don't want patterns, keep arrays empty.
+ */
+const MASK_PREFIXES = ["SECRET_", "TOKEN_", "KEY_", "PASS_"];
+const MASK_SUFFIXES = ["_TOKEN", "_SECRET", "_PASSWORD", "_PASS", "_KEY"];
+
+function shouldMaskKey(key) {
+  if (MASK_KEYS.has(key)) return true;
+  for (const p of MASK_PREFIXES) if (p && key.startsWith(p)) return true;
+  for (const s of MASK_SUFFIXES) if (s && key.endsWith(s)) return true;
+  return false;
+}
 
 /** Detect CI */
 function isLikelyAzure() {
@@ -102,13 +133,13 @@ function appendGitHubEnv(envFilePath, key, value) {
 }
 
 /** Export variable into: current process + GitHub env file + Azure variables */
-function exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure }) {
+function exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure, mask }) {
   // current process env
   process.env[key] = value;
 
-  // ✅ Mask value in CI logs (best-effort)
-  if (inGitHub) {
-    addMaskGitHub(value);
+  // ✅ Mask (ONLY for selected keys)
+  if (mask) {
+    if (inGitHub) addMaskGitHub(value);
   }
 
   // GitHub persists for next steps
@@ -116,10 +147,14 @@ function exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure }) {
     appendGitHubEnv(githubEnvFile, key, value);
   }
 
-  // Azure persists for next tasks (marked secret to mask logs)
+  // Azure persists for next tasks
   if (inAzure) {
     const safe = String(value).replace(/\r?\n/g, "\\n");
-    process.stdout.write(`##vso[task.setvariable variable=${key};issecret=true]${safe}\n`);
+    if (mask) {
+      process.stdout.write(`##vso[task.setvariable variable=${key};issecret=true]${safe}\n`);
+    } else {
+      process.stdout.write(`##vso[task.setvariable variable=${key}]${safe}\n`);
+    }
   }
 }
 
@@ -169,22 +204,26 @@ async function main() {
   const dev = isDevStage();
 
   const exported = [];
+  const masked = [];
   const warnings = [];
 
   for (const [rawKey, rawVal] of Object.entries(json)) {
     const { key, changed, original } = normalizeKey(rawKey);
     const value = toEnvValue(rawVal);
+    const mask = shouldMaskKey(key);
 
     if (changed) warnings.push(`Key "${original}" sanitized -> "${key}"`);
 
     // ✅ Export original key/value
     try {
-      exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure });
+      exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure, mask });
     } catch (e) {
       console.error(`❌ Export failed for "${key}":`, e?.message || e);
       process.exit(4);
     }
+
     exported.push(key);
+    if (mask) masked.push(key);
 
     // ✅ If ends with __BASE64__, also export decoded version
     if (key.endsWith(BASE64_SUFFIX)) {
@@ -211,13 +250,17 @@ async function main() {
         warnings.push(`Decoded "${baseKey}" is empty (input non-empty). Check base64 content.`);
       }
 
+      const baseMask = shouldMaskKey(baseKey);
+
       try {
-        exportVarEverywhere({ key: baseKey, value: decoded, inGitHub, githubEnvFile, inAzure });
+        exportVarEverywhere({ key: baseKey, value: decoded, inGitHub, githubEnvFile, inAzure, mask: baseMask });
       } catch (e) {
         console.error(`❌ Export failed for decoded "${baseKey}":`, e?.message || e);
         process.exit(4);
       }
+
       exported.push(baseKey);
+      if (baseMask) masked.push(baseKey);
     }
   }
 
@@ -227,8 +270,12 @@ async function main() {
 
   console.log(`✅ ENV_STAGE=${process.env.ENV_STAGE || "PROD"} | Loaded ${exported.length} env var(s) into: ${where}`);
 
+  if (masked.length) {
+    console.log(`🔒 Masked ${masked.length} key(s): ${masked.join(", ")}`);
+  }
+
   if (dev) {
-    console.log("🧪 DEV mode: exported keys (values are masked)");
+    console.log("🧪 DEV mode: exported keys (values masked)");
     for (const k of exported) console.log(`${k}=***`);
   }
 }
