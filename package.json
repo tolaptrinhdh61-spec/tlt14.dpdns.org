@@ -3,7 +3,8 @@
   "version": "1.0.1",
   "dependencies": {
     "firebase-admin": "^13.6.0",
-    "pm2": "^6.0.13"
+    "pm2": "^6.0.13",
+    "dotenv": "^17.2.3"
   },
   "devDependencies": {
     "simple-git": "^3.30.0"
