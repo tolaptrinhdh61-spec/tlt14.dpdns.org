@@ -262,8 +262,8 @@ function startEnvListener(serviceAccountB64EnvKey, options = {}) {
 
     try {
       // Chạy file mjs và lấy kết quả qua stdout
-      console.log(`⚡⚡ node ./js-scripts/load-env-from-url.mjs --update-pm2`);
-      const stdout = execSync(`node ./js-scripts/load-env-from-url.mjs --update-pm2`, {
+      console.log(`⚡⚡ node ./js-scripts/load-env-from-url.mjs`);
+      const stdout = execSync(`node ./js-scripts/load-env-from-url.mjs`, {
         encoding: "utf8",
         stdio: ["pipe", "pipe", "inherit"],
       });
