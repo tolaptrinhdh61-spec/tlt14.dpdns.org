@@ -5,6 +5,7 @@
  * - nginx -t (validate)
  * - start nginx foreground (daemon off)
  * - Auto reload if nginx is already running
+ * - Handle PM2 restart properly
  *
  * Env:
  * - APP_CWD: repo root (default: process.cwd())
@@ -115,11 +116,50 @@ function reloadNginx() {
   }
 }
 
+/**
+ * Stop nginx gracefully
+ */
+function stopNginx() {
+  if (!fs.existsSync(PID_FILE)) return;
+
+  try {
+    const pid = fs.readFileSync(PID_FILE, "utf8").trim();
+    if (!pid) return;
+
+    console.log(`🛑 Stopping existing nginx (PID: ${pid})...`);
+    process.kill(parseInt(pid, 10), "SIGTERM");
+
+    // Đợi nginx shutdown (tối đa 5 giây)
+    let attempts = 0;
+    while (attempts < 50) {
+      try {
+        process.kill(parseInt(pid, 10), 0);
+        // Vẫn còn chạy, đợi thêm
+        execSync("sleep 0.1", { stdio: "ignore" });
+        attempts++;
+      } catch {
+        // Process đã dừng
+        console.log("✅ Nginx stopped successfully");
+        return;
+      }
+    }
+
+    // Nếu chưa dừng sau 5 giây, force kill
+    console.log("⚠️  Force killing nginx...");
+    try {
+      process.kill(parseInt(pid, 10), "SIGKILL");
+    } catch {}
+  } catch (err) {
+    console.error("⚠️  Error stopping nginx:", err.message);
+  }
+}
+
 function main() {
   console.log("=== run-nginx.mjs ===");
   console.log("CWD:", CWD);
   console.log("NGINX_CONF_PATH:", NGINX_CONF_PATH);
   console.log("NGINX_PREFIX:", NGINX_PREFIX);
+  console.log("PID_FILE:", PID_FILE);
 
   ensureDirs();
 
@@ -136,23 +176,51 @@ function main() {
   for (const d of REQUIRED_DIRS) console.log(" -", d);
 
   // Kiểm tra nginx đã chạy chưa
-  if (isNginxRunning()) {
+  const alreadyRunning = isNginxRunning();
+
+  if (alreadyRunning) {
+    console.log("⚠️  Nginx đang chạy từ instance cũ");
+
     if (configChanged) {
-      console.log("⚠️  Nginx.conf đã thay đổi");
-      if (reloadNginx()) {
-        console.log("🎉 Hoàn tất! Nginx đang chạy với config mới.");
-        process.exit(0);
-      } else {
-        console.log("⚠️  Reload thất bại, tiếp tục khởi động lại...");
-      }
+      console.log("📝 Config đã thay đổi, cần restart...");
+      stopNginx();
     } else {
-      console.log("✅ Nginx đang chạy và config không đổi, không cần reload.");
-      process.exit(0);
+      console.log("📝 Config không đổi, thử reload graceful...");
+      if (reloadNginx()) {
+        console.log("🎉 Reload thành công! Keeping old instance running.");
+        // Không exit, để PM2 process này tiếp tục chạy và giám sát
+        // Nhưng không start nginx mới vì đã có rồi
+
+        // Attach vào process cũ để PM2 có thể quản lý
+        const oldPid = parseInt(fs.readFileSync(PID_FILE, "utf8").trim(), 10);
+
+        // Keep this process alive để PM2 không tưởng là crashed
+        setInterval(() => {
+          // Check nginx vẫn còn chạy không
+          try {
+            process.kill(oldPid, 0);
+          } catch {
+            console.log("⚠️  Nginx process died, restarting...");
+            process.exit(1); // Để PM2 restart
+          }
+        }, 5000);
+
+        return;
+      } else {
+        console.log("⚠️  Reload thất bại, restart nginx...");
+        stopNginx();
+      }
     }
   }
 
+  // Validate config
   console.log("🔍 nginx -t ...");
-  runNginx(["-t", "-p", NGINX_PREFIX, "-c", NGINX_CONF_PATH], "nginx -t");
+  try {
+    execSync(`nginx -t -p "${NGINX_PREFIX}" -c "${NGINX_CONF_PATH}"`, { stdio: "inherit" });
+  } catch (err) {
+    console.error("❌ Config validation failed!");
+    process.exit(1);
+  }
 
   console.log("🚀 Starting nginx (daemon off) ...");
   const nginx = runNginx(["-p", NGINX_PREFIX, "-c", NGINX_CONF_PATH, "-g", "daemon off;"], "nginx");
@@ -162,11 +230,26 @@ function main() {
     try {
       nginx.kill("SIGTERM");
     } catch {}
+
+    // Cleanup PID file
+    try {
+      if (fs.existsSync(PID_FILE)) {
+        fs.unlinkSync(PID_FILE);
+      }
+    } catch {}
+
     process.exit(0);
   };
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  // Đảm bảo cleanup khi PM2 restart
+  process.on("SIGTERM", () => {
+    console.log("🔄 PM2 restart detected, stopping nginx gracefully...");
+    stopNginx();
+    process.exit(0);
+  });
 }
 
 main();
