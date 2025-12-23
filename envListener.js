@@ -39,7 +39,6 @@ const os = require("os");
 const { execSync } = require("child_process");
 
 const { restartPM2Apps } = require("./js-scripts/helpers/pm2Restart");
-const { updateEnv } = require("./js-scripts/helpers/envUpdater");
 
 function normalizeBase64(input) {
   if (!input || typeof input !== "string") return "";
@@ -261,17 +260,21 @@ function startEnvListener(serviceAccountB64EnvKey, options = {}) {
 
     console.log("\n🔔 Firebase ENV data changed");
 
-    const result = updateEnv(data, { envFilePath });
+    try {
+      // Chạy file mjs và lấy kết quả qua stdout
+      const stdout = execSync(`node js-scripts/load-env-from-url.mjs`, {
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "inherit"],
+      });
 
-    if (result.updated) {
       console.log("\n♻️  ENV updated -> restarting PM2 apps (sequential)...");
       try {
         await restartPM2Apps(pm2Apps);
       } catch (e) {
         console.error("❌ Restart sequence error:", e.message);
       }
-    } else {
-      console.log("✓ No changes detected (process.env unchanged)");
+    } catch (error) {
+      console.error("❌ Error running load-env-from-url.mjs:", error.message);
     }
   };
 

@@ -151,15 +151,6 @@ function exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure, mas
     const safe = value.replace(/\r?\n/g, "\\n");
     process.stdout.write(`##vso[task.setvariable variable=${key}]${safe}\n`);
   }
-  // Azure persists for next tasks => Set mask không thấy được
-  // if (inAzure) {
-  //   const safe = String(value).replace(/\r?\n/g, "\\n");
-  //   if (mask) {
-  //     process.stdout.write(`##vso[task.setvariable variable=${key};issecret=true]${safe}\n`);
-  //   } else {
-  //     process.stdout.write(`##vso[task.setvariable variable=${key}]${safe}\n`);
-  //   }
-  // }
 }
 
 async function fetchJson(url) {
