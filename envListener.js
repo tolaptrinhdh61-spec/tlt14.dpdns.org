@@ -262,10 +262,12 @@ function startEnvListener(serviceAccountB64EnvKey, options = {}) {
 
     try {
       // Chạy file mjs và lấy kết quả qua stdout
-      const stdout = execSync(`node js-scripts/load-env-from-url.mjs`, {
+      console.log(`⚡⚡ node ./js-scripts/load-env-from-url.mjs`);
+      const stdout = execSync(`node ./js-scripts/load-env-from-url.mjs`, {
         encoding: "utf8",
         stdio: ["pipe", "pipe", "inherit"],
       });
+      console.log(`⚡⚡ stdout: ${stdout}`);
 
       console.log("\n♻️  ENV updated -> restarting PM2 apps (sequential)...");
       try {
