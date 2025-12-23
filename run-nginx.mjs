@@ -35,6 +35,10 @@ if (!conf || !conf.trim()) {
   process.exit(2);
 }
 
+console.log(`conf:::`);
+console.log(`${conf}`);
+console.log(`conf:::`);
+
 // ✅ These match your nginx.conf:
 const REQUIRED_DIRS = [
   path.join(NGINX_PREFIX, "logs"),
