@@ -15,12 +15,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawn, execSync } from "node:child_process";
 
 const CWD = process.env.APP_CWD ? path.resolve(process.env.APP_CWD) : process.cwd();
 const NGINX_CONF_PATH = process.env.NGINX_CONF_PATH ? path.resolve(CWD, process.env.NGINX_CONF_PATH) : path.join(CWD, "nginx.conf");
 const NGINX_PREFIX = process.env.NGINX_PREFIX ? path.resolve(CWD, process.env.NGINX_PREFIX) : path.join(CWD, "nginx");
 const PID_FILE = path.join(NGINX_PREFIX, "run", "nginx.pid");
+const HASH_FILE = path.join(NGINX_PREFIX, "run", "config.hash");
 
 // lấy conf: ưu tiên base64
 const confB64 = process.env.NGINX_CONF__BASE64__ || "";
@@ -74,6 +76,13 @@ function mustExist(filePath, msg) {
     console.error(`❌ ${msg}: ${filePath}`);
     process.exit(2);
   }
+}
+
+/**
+ * Tính hash của config để detect thay đổi thật sự
+ */
+function getConfigHash(content) {
+  return crypto.createHash("sha256").update(content).digest("hex");
 }
 
 /**
@@ -163,12 +172,34 @@ function main() {
 
   ensureDirs();
 
-  // Ghi file nginx.conf mới
-  const oldConf = fs.existsSync(NGINX_CONF_PATH) ? fs.readFileSync(NGINX_CONF_PATH, "utf8") : "";
-  const configChanged = oldConf !== conf;
+  // Tính hash của config từ ENV
+  const newConfigHash = getConfigHash(conf);
+  console.log("📋 Config hash from ENV:", newConfigHash.substring(0, 12) + "...");
 
+  // Đọc hash cũ từ file (nếu có)
+  let oldConfigHash = "";
+  if (fs.existsSync(HASH_FILE)) {
+    try {
+      oldConfigHash = fs.readFileSync(HASH_FILE, "utf8").trim();
+      console.log("📋 Previous hash on disk:", oldConfigHash.substring(0, 12) + "...");
+    } catch {}
+  }
+
+  // So sánh hash để detect thay đổi THẬT SỰ
+  const configChanged = newConfigHash !== oldConfigHash;
+
+  if (configChanged) {
+    console.log("✏️  Config ĐÃ THAY ĐỔI (hash khác nhau)");
+  } else {
+    console.log("✅ Config KHÔNG ĐỔI (hash giống nhau)");
+  }
+
+  // Ghi file nginx.conf mới
   fs.writeFileSync(NGINX_CONF_PATH, conf, { encoding: "utf8" });
   console.log("✅ Wrote nginx.conf at:", NGINX_CONF_PATH);
+
+  // Lưu hash mới
+  fs.writeFileSync(HASH_FILE, newConfigHash, { encoding: "utf8" });
 
   mustExist(NGINX_CONF_PATH, "nginx.conf not found");
 
