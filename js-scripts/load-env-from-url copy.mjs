@@ -4,7 +4,6 @@
  * Load JSON from URL and export to:
  * - GitHub Actions: via GITHUB_ENV (persist across steps in same job)
  * - Azure Pipelines: via ##vso[task.setvariable] (persist across subsequent tasks)
- * - Local Shell: via stdout export commands (use with eval)
  *
  * Extra features:
  * - If a key ends with __BASE64__, also create a decoded variable:
@@ -15,12 +14,7 @@
  * - Mask ONLY selected keys (configurable below)
  * - GitHub Actions: ::add-mask::
  * - Azure Pipelines: issecret=true (only for masked keys)
- * - Local: secrets are still exported but marked with comment
  * - DEV mode: prints keys only (values masked)
- *
- * Usage:
- *   CI/CD: node load-env-from-url.mjs
- *   Local: eval $(node load-env-from-url.mjs)
  */
 
 import fs from "node:fs";
@@ -30,6 +24,9 @@ const BASE64_SUFFIX = "__BASE64-remove__";
 
 /**
  * ✅ Keys to mask (ONLY these keys will be masked)
+ * - Put exact env var names here AFTER normalization (recommended).
+ * - If you want to include BASE64 decoded key, add both:
+ *   e.g. "NGINX_CONF__BASE64__" and "NGINX_CONF"
  */
 const MASK_KEYS = new Set([
   "ENV_JSON_URL",
@@ -43,6 +40,7 @@ const MASK_KEYS = new Set([
 
 /**
  * Optional: also mask keys by pattern (prefix/suffix)
+ * If you don't want patterns, keep arrays empty.
  */
 const MASK_PREFIXES = ["SECRET_", "TOKEN_", "KEY_", "PASS_"];
 const MASK_SUFFIXES = ["_TOKEN", "_SECRET", "_PASSWORD", "_PASS", "_KEY"];
@@ -68,12 +66,14 @@ function addMaskGitHub(value) {
   const s = String(value ?? "");
   if (!s) return;
 
+  // GitHub: mask whole string
   const normalized = s.replace(/\r/g, "");
-  process.stderr.write(`::add-mask::${normalized}\n`);
+  process.stdout.write(`::add-mask::${normalized}\n`);
 
+  // If multiline, also mask each line (helps prevent partial leaks)
   if (normalized.includes("\n")) {
     for (const line of normalized.split("\n")) {
-      if (line) process.stderr.write(`::add-mask::${line}\n`);
+      if (line) process.stdout.write(`::add-mask::${line}\n`);
     }
   }
 }
@@ -81,6 +81,7 @@ function addMaskGitHub(value) {
 /** Key normalization to safe env var name */
 function normalizeKey(key) {
   const s = String(key);
+
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return { key: s, changed: false };
 
   const sanitized = s
@@ -119,12 +120,6 @@ function decodeBase64ToUtf8(s) {
   return buf.toString("utf8");
 }
 
-/** Escape value for shell export (single quotes) */
-function escapeShellValue(value) {
-  // Replace ' with '\'' (end quote, escaped quote, start quote)
-  return String(value).replace(/'/g, "'\\''");
-}
-
 /** Write to GITHUB_ENV safely (supports multiline) */
 function appendGitHubEnv(envFilePath, key, value) {
   const hasNewline = /\r|\n/.test(value);
@@ -137,12 +132,12 @@ function appendGitHubEnv(envFilePath, key, value) {
   fs.appendFileSync(envFilePath, `${key}<<${delimiter}\n${value}\n${delimiter}\n`, "utf8");
 }
 
-/** Export variable into: current process + GitHub env file + Azure variables + Shell stdout */
-function exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure, inLocal, mask, shellExports }) {
+/** Export variable into: current process + GitHub env file + Azure variables */
+function exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure, mask }) {
   // current process env
   process.env[key] = value;
 
-  // ✅ Mask for CI/CD
+  // ✅ Mask (ONLY for selected keys)
   if (mask) {
     if (inGitHub) addMaskGitHub(value);
   }
@@ -151,18 +146,10 @@ function exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure, inL
   if (inGitHub && githubEnvFile) {
     appendGitHubEnv(githubEnvFile, key, value);
   }
-
   // Azure persists for next tasks
   if (inAzure) {
     const safe = value.replace(/\r?\n/g, "\\n");
-    process.stderr.write(`##vso[task.setvariable variable=${key}]${safe}\n`);
-  }
-
-  // Local shell: collect export commands
-  if (inLocal && shellExports) {
-    const escapedValue = escapeShellValue(value);
-    const comment = mask ? " # SECRET" : "";
-    shellExports.push(`export ${key}='${escapedValue}'${comment}`);
+    process.stdout.write(`##vso[task.setvariable variable=${key}]${safe}\n`);
   }
 }
 
@@ -209,13 +196,11 @@ async function main() {
   const githubEnvFile = process.env.GITHUB_ENV;
   const inGitHub = isLikelyGitHub();
   const inAzure = isLikelyAzure();
-  const inLocal = !inGitHub && !inAzure;
   const dev = isDevStage();
 
   const exported = [];
   const masked = [];
   const warnings = [];
-  const shellExports = []; // Collect shell export commands
 
   for (const [rawKey, rawVal] of Object.entries(json)) {
     const { key, changed, original } = normalizeKey(rawKey);
@@ -226,16 +211,7 @@ async function main() {
 
     // ✅ Export original key/value
     try {
-      exportVarEverywhere({
-        key,
-        value,
-        inGitHub,
-        githubEnvFile,
-        inAzure,
-        inLocal,
-        mask,
-        shellExports,
-      });
+      exportVarEverywhere({ key, value, inGitHub, githubEnvFile, inAzure, mask });
     } catch (e) {
       console.error(`❌ Export failed for "${key}":`, e?.message || e);
       process.exit(4);
@@ -272,16 +248,7 @@ async function main() {
       const baseMask = shouldMaskKey(baseKey);
 
       try {
-        exportVarEverywhere({
-          key: baseKey,
-          value: decoded,
-          inGitHub,
-          githubEnvFile,
-          inAzure,
-          inLocal,
-          mask: baseMask,
-          shellExports,
-        });
+        exportVarEverywhere({ key: baseKey, value: decoded, inGitHub, githubEnvFile, inAzure, mask: baseMask });
       } catch (e) {
         console.error(`❌ Export failed for decoded "${baseKey}":`, e?.message || e);
         process.exit(4);
@@ -292,35 +259,19 @@ async function main() {
     }
   }
 
-  // Output warnings to stderr (won't interfere with eval)
   for (const w of warnings) console.error(`⚠️ ${w}`);
 
-  const where = (inGitHub ? "GitHub" : "") + (inGitHub && inAzure ? "+" : "") + (inAzure ? "Azure" : "") + (inLocal ? "Local Shell" : "");
+  const where = (inGitHub ? "GitHub" : "") + (inGitHub && inAzure ? "+" : "") + (inAzure ? "Azure" : "") + (!inGitHub && !inAzure ? "Local" : "");
 
-  console.error(`✅ ENV_STAGE=${process.env.ENV_STAGE || "PROD"} | Loaded ${exported.length} env var(s) into: ${where}`);
+  console.log(`✅ ENV_STAGE=${process.env.ENV_STAGE || "PROD"} | Loaded ${exported.length} env var(s) into: ${where}`);
 
   if (masked.length) {
-    console.error(`🔒 Masked ${masked.length} key(s): ${masked.join(", ")}`);
+    console.log(`🔒 Masked ${masked.length} key(s): ${masked.join(", ")}`);
   }
 
-  // ✅ LOCAL MODE: Output shell export commands to STDOUT
-  if (inLocal) {
-    if (dev) {
-      console.error("🧪 DEV mode: exported keys (values masked)");
-      for (const k of exported) console.error(`${k}=***`);
-    } else {
-      // Output shell exports to STDOUT for eval
-      for (const line of shellExports) {
-        console.log(line);
-      }
-    }
-
-    console.error("\n💡 Usage:");
-    console.error("   eval $(node load-env-from-url.mjs)");
-    console.error("   pm2 restart app --update-env");
-  } else if (dev) {
-    console.error("🧪 DEV mode: exported keys (values masked)");
-    for (const k of exported) console.error(`${k}=***`);
+  if (dev) {
+    console.log("🧪 DEV mode: exported keys (values masked)");
+    for (const k of exported) console.log(`${k}=***`);
   }
 }
 
