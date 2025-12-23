@@ -1,8 +1,8 @@
 const path = require("path");
 const fs = require("fs");
-
+const CWD = process.env.APP_CWD || process.cwd();
 const ENV_DEFAULT = {
-  cwd: process.env.APP_CWD || process.cwd(),
+  cwd: CWD,
   autorestart: true,
   max_restarts: 10,
   env_file: process.env.ENV_FILE || path.join(CWD, ".env.runtime"),
