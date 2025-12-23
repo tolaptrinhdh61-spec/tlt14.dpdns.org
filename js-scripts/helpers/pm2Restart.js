@@ -5,7 +5,7 @@ const pm2 = require("pm2");
 
 function restartOne(appName) {
   return new Promise((resolve, reject) => {
-    pm2.restart(appName, (err) => {
+    pm2.restart({ name: appName, updateEnv: true }, (err) => {
       if (err) return reject(err);
       resolve();
     });
