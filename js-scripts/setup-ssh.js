@@ -869,7 +869,8 @@ async function persistSshUrlsIfNeeded({ sshjConnect, pinggyEndpoint }) {
     return;
   }
 
-  const payload = {};
+  const payload = { CURRENT_USER };
+
   if (sshjConnect) payload.SSHJ_CONNECT = sshjConnect;
   if (pinggyEndpoint) payload.PINGGY_ENDPOINT = pinggyEndpoint;
 
