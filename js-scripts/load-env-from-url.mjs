@@ -30,6 +30,15 @@
 import fs from "node:fs";
 import process from "node:process";
 import path from "node:path";
+import dotenv from "dotenv";
+const initEnv = (() => {
+  let envPath = path.join(process.cwd(), ".env.runtime");
+  if (fs.existsSync(envPath) === true) {
+    dotenv.config({ path: envPath, override: true });
+  } else {
+    console.warn(`FILE ENV NOT FOUND: ${envPath}`);
+  }
+})();
 
 const BASE64_SUFFIX = "__BASE64-remove__";
 

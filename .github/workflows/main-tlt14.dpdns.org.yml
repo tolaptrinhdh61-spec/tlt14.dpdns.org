@@ -40,6 +40,19 @@ jobs:
         with:
           node-version: "20"
 
+      - name: npm-install
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install
+          npm i -g pm2
+          # ✅ make global npm bin available for NEXT steps
+          echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
+
+          # kiểm tra ngay trong step này
+          which pm2
+          pm2 -v
+
       - name: list-files.mjs
         run: node ./js-scripts/list-files.mjs
 
@@ -62,19 +75,6 @@ jobs:
         env:
           PINGGY_ENABLE: "1"
           SSHJ_ENABLE: "1"
-
-      - name: npm-install
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install
-          npm i -g pm2
-          # ✅ make global npm bin available for NEXT steps
-          echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
-
-          # kiểm tra ngay trong step này
-          which pm2
-          pm2 -v
 
       - name: Start PM2 nginx;cloudflared;envListener
         shell: bash
