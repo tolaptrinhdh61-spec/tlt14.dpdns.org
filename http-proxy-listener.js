@@ -88,8 +88,39 @@ function joinKeys(keys, limit = 18) {
   const head = arr.slice(0, limit).join(", ");
   return `${head}, …(+${arr.length - limit})`;
 }
-
 function buildOrderLine(sortedKeys, nextIndex) {
+  const keys = sortedKeys || [];
+  if (keys.length === 0) return "∅";
+
+  const ordered = keys.map(shortKey);
+  const chainLimit = 20;
+  const lineLimit = 7; // Số lượng key tối đa trên một dòng
+
+  let chain = ordered;
+  let more = 0;
+  if (ordered.length > chainLimit) {
+    chain = ordered.slice(0, chainLimit);
+    more = ordered.length - chainLimit;
+  }
+
+  // Chia chuỗi thành nhiều dòng nếu cần
+  const chunks = [];
+  while (chain.length > lineLimit) {
+    chunks.push(chain.slice(0, lineLimit).join(" → "));
+    chain = chain.slice(lineLimit);
+  }
+  chunks.push(chain.join(" → ")); // Thêm phần còn lại vào dòng cuối
+
+  const nextKey = keys[nextIndex % keys.length];
+  const nextShort = shortKey(nextKey);
+
+  // Nếu có nhiều hơn 1 dòng, xuống dòng giữa các đoạn
+  const orderLine = chunks.join("\n");
+
+  return `${orderLine}${more > 0 ? ` → …(+${more})` : ""}   |   ⏭️ next: ${nextShort}`;
+}
+
+function buildOrderLine_remove(sortedKeys, nextIndex) {
   const keys = sortedKeys || [];
   if (keys.length === 0) return "∅";
 
