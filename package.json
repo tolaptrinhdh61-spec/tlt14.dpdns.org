@@ -4,7 +4,9 @@
   "dependencies": {
     "firebase-admin": "^13.6.0",
     "pm2": "^6.0.13",
-    "dotenv": "^17.2.3"
+    "dotenv": "^17.2.3",
+    "http-proxy": "^1.18.1",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "simple-git": "^3.30.0"

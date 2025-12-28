@@ -16,8 +16,8 @@ module.exports = {
   apps: [
     {
       ...ENV_DEFAULT,
-      name: "nginx",
-      script: path.join(CWD, "run-nginx.mjs"),
+      name: "http-proxy-listener",
+      script: path.join(CWD, "http-proxy-listener.js"),
       interpreter: "node",
     },
     {
