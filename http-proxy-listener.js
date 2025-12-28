@@ -64,6 +64,52 @@ function normalizeUploadAt(v) {
 }
 
 // ========================================
+// 🧩 HELPER LOG
+// ========================================
+function shortKey(key) {
+  if (!key) return "unknown";
+  let k = String(key);
+
+  // rút gọn kiểu: images-worker-tlt29-workers-dev -> tlt29
+  k = k.replace(/^images-worker-/, "");
+  k = k.replace(/-workers-(dev|prod)$/i, "");
+  k = k.replace(/-workers$/i, "");
+  k = k.replace(/-dev$/i, "");
+
+  // nếu vẫn dài quá thì cắt bớt
+  if (k.length > 28) k = k.slice(0, 12) + "…" + k.slice(-10);
+
+  return k;
+}
+
+function joinKeys(keys, limit = 18) {
+  const arr = (keys || []).map(shortKey);
+  if (arr.length <= limit) return arr.join(", ");
+  const head = arr.slice(0, limit).join(", ");
+  return `${head}, …(+${arr.length - limit})`;
+}
+
+function buildOrderLine(sortedKeys, nextIndex) {
+  const keys = sortedKeys || [];
+  if (keys.length === 0) return "∅";
+
+  const ordered = keys.map(shortKey);
+  const chainLimit = 20;
+
+  let chain = ordered;
+  let more = 0;
+  if (ordered.length > chainLimit) {
+    chain = ordered.slice(0, chainLimit);
+    more = ordered.length - chainLimit;
+  }
+
+  const nextKey = keys[nextIndex % keys.length];
+  const nextShort = shortKey(nextKey);
+
+  return `${chain.join(" → ")}${more > 0 ? ` → …(+${more})` : ""}   |   ⏭️ next: ${nextShort}`;
+}
+
+// ========================================
 // 🎯 QUẢN LÝ DANH SÁCH WORKER
 // ========================================
 class WorkerPool {
@@ -71,52 +117,135 @@ class WorkerPool {
     this.workers = new Map(); // key -> worker info
     this.sortedKeys = []; // key list sorted by upload_at
     this.currentIndex = 0;
+
+    this._firstSyncLogged = false;
   }
 
-  updateWorker(key, data, resort = true) {
+  _toComparable(data) {
+    if (!data) return null;
+    return {
+      url: data.url || "",
+      upload_at: normalizeUploadAt(data.upload_at),
+      version: data.version || "unknown",
+      runner_by: data.runner_by || "unknown",
+    };
+  }
+
+  _snapshotComparableMap() {
+    const m = new Map();
+    for (const [key, w] of this.workers.entries()) {
+      m.set(key, {
+        url: w.url || "",
+        upload_at: w.upload_at || 0,
+        version: w.version || "unknown",
+        runner_by: w.runner_by || "unknown",
+      });
+    }
+    return m;
+  }
+
+  updateWorker(key, data, resort = true, log = false) {
     if (!data || !data.url) {
-      console.warn(`⚠️  Worker ${key} không có URL, bỏ qua`);
-      return;
+      if (log) console.warn(`⚠️  Worker ${key} không có URL, bỏ qua`);
+      return false;
     }
 
     const uploadAt = normalizeUploadAt(data.upload_at);
 
-    this.workers.set(key, {
+    const prev = this.workers.get(key);
+    const next = {
       key,
       url: data.url,
       upload_at: uploadAt,
       version: data.version || "unknown",
       runner_by: data.runner_by || "unknown",
-    });
+    };
+
+    this.workers.set(key, next);
 
     if (resort) this._resort();
 
-    console.log(`✅ Cập nhật worker: ${key} → ${data.url}`);
+    // trả về "có thay đổi gì không" để syncFromObject tự log gọn
+    if (!prev) return true;
+
+    return prev.url !== next.url || prev.upload_at !== next.upload_at || prev.version !== next.version || prev.runner_by !== next.runner_by;
   }
 
-  removeWorker(key, resort = true) {
+  removeWorker(key, resort = true, log = false) {
     if (this.workers.has(key)) {
       this.workers.delete(key);
       if (resort) this._resort();
-      console.log(`🗑️  Đã xóa worker: ${key}`);
+      if (log) console.log(`🗑️  Đã xóa worker: ${key}`);
+      return true;
     }
+    return false;
   }
 
-  // ✅ Đồng bộ theo "state cuối cùng" từ Firebase
+  // ✅ Đồng bộ theo "state cuối cùng" từ Firebase + log gọn theo diff
   syncFromObject(obj) {
-    const nextKeys = new Set(Object.keys(obj || {}));
+    const before = this._snapshotComparableMap();
+
+    const incoming = obj || {};
+    const nextKeys = new Set(Object.keys(incoming));
+
+    const removed = [];
+    const added = [];
+    const updated = [];
 
     // remove missing
     for (const key of Array.from(this.workers.keys())) {
-      if (!nextKeys.has(key)) this.removeWorker(key, false);
+      if (!nextKeys.has(key)) {
+        const ok = this.removeWorker(key, false, false);
+        if (ok) removed.push(key);
+      }
     }
 
-    // upsert all
-    for (const [key, data] of Object.entries(obj || {})) {
-      this.updateWorker(key, data, false);
+    // upsert all (silent)
+    for (const [key, raw] of Object.entries(incoming)) {
+      const nextComp = this._toComparable(raw);
+      if (!nextComp || !nextComp.url) continue;
+
+      const existed = before.has(key);
+      const changed = this.updateWorker(
+        key,
+        { ...raw, upload_at: nextComp.upload_at, version: nextComp.version, runner_by: nextComp.runner_by },
+        false,
+        false
+      );
+
+      if (!existed) added.push(key);
+      else if (changed) updated.push(key);
     }
 
     this._resort();
+
+    const hasDiff = added.length || removed.length || updated.length;
+
+    // log lần đầu hoặc khi có thay đổi
+    if (!this._firstSyncLogged || hasDiff) {
+      const total = this.size();
+
+      if (!this._firstSyncLogged) {
+        console.log(`🔄 Synced workers: ${total}`);
+        console.log(`🧭 RR order: ${buildOrderLine(this.sortedKeys, this.currentIndex)}`);
+        this._firstSyncLogged = true;
+        return;
+      }
+
+      // log gọn phần thay đổi
+      const parts = [];
+      if (added.length) parts.push(`➕ ${added.length}`);
+      if (removed.length) parts.push(`➖ ${removed.length}`);
+      if (updated.length) parts.push(`✏️ ${updated.length}`);
+
+      console.log(`🔁 Worker pool changed (${parts.join(" | ") || "no-diff"}), total=${total}`);
+
+      if (added.length) console.log(`   ➕ Added: ${joinKeys(added)}`);
+      if (removed.length) console.log(`   ➖ Removed: ${joinKeys(removed)}`);
+      if (updated.length) console.log(`   ✏️ Updated: ${joinKeys(updated)}`);
+
+      console.log(`   🧭 RR order: ${buildOrderLine(this.sortedKeys, this.currentIndex)}`);
+    }
   }
 
   _resort() {
@@ -174,7 +303,7 @@ function startFirebaseListener() {
     (snapshot) => {
       const all = snapshot.val() || {};
       workerPool.syncFromObject(all);
-      console.log(`🔄 Synced workers: ${workerPool.size()}`);
+      // ✅ không log dài từng worker nữa, log gọn nằm trong syncFromObject()
     },
     (err) => {
       console.error("❌ Lỗi on(value):", err.message);
@@ -326,10 +455,8 @@ async function start() {
     if (workerPool.size() === 0) {
       console.warn("⚠️  Chưa có worker nào, proxy sẽ trả về 503 cho đến khi có worker");
     } else {
-      console.log(`✅ Đã load ${workerPool.size()} worker(s):`);
-      workerPool.getAllWorkers().forEach((w, i) => {
-        console.log(`   ${i + 1}. ${w.key} → ${w.url} (v${w.version})`);
-      });
+      console.log(`✅ Đã load ${workerPool.size()} worker(s)`);
+      // ✅ danh sách + thứ tự đã được log gọn trong syncFromObject() rồi
     }
 
     server.listen(PORT, () => {
