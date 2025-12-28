@@ -120,26 +120,6 @@ function buildOrderLine(sortedKeys, nextIndex) {
   return `${orderLine}${more > 0 ? ` → …(+${more})` : ""}   |   ⏭️ next: ${nextShort}`;
 }
 
-function buildOrderLine_remove(sortedKeys, nextIndex) {
-  const keys = sortedKeys || [];
-  if (keys.length === 0) return "∅";
-
-  const ordered = keys.map(shortKey);
-  const chainLimit = 20;
-
-  let chain = ordered;
-  let more = 0;
-  if (ordered.length > chainLimit) {
-    chain = ordered.slice(0, chainLimit);
-    more = ordered.length - chainLimit;
-  }
-
-  const nextKey = keys[nextIndex % keys.length];
-  const nextShort = shortKey(nextKey);
-
-  return `${chain.join(" → ")}${more > 0 ? ` → …(+${more})` : ""}   |   ⏭️ next: ${nextShort}`;
-}
-
 // ========================================
 // 🎯 QUẢN LÝ DANH SÁCH WORKER
 // ========================================
