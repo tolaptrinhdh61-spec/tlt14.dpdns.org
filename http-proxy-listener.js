@@ -298,6 +298,10 @@ class WorkerPool {
   size() {
     return this.workers.size;
   }
+
+  getOrderStr() {
+    return `🧭 RR order: ${buildOrderLine(this.sortedKeys, this.currentIndex)}`;
+  }
 }
 
 const workerPool = new WorkerPool();
@@ -362,13 +366,14 @@ const server = http.createServer((req, res) => {
       JSON.stringify(
         {
           status: "ok",
+          total_workers: workerPool.size(),
+          orderStr: workerPool.getOrderStr(),
           workers: workerPool.getAllWorkers().map((w) => ({
             key: w.key,
             url: w.url,
             version: w.version,
             upload_at: new Date(w.upload_at).toISOString(),
           })),
-          total_workers: workerPool.size(),
         },
         null,
         2
